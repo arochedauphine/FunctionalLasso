@@ -1,0 +1,206 @@
+source("fonctions_simuX.R")
+source("normes_ps_L2.R")
+source("glmnet_func2.R")
+source("tikhonov.R")
+
+
+# Simulation des donnees
+n = 1000
+p = 7
+
+p1 = 100
+X1i = MvB(n,p1)
+X1 = X1i - colMeans(X1i)
+
+p2 = 50
+X2i = simuX_FV2000(n,p2)
+X2 = X2i - colMeans(X2i)
+
+X3 = X2^2
+X3 = X3 - colMeans(X3)
+
+d4 = 4
+Z4 = matrix(runif(n*d4),n,d4)
+A = matrix(rep(-1:3,d4),d4,d4)
+X4 = Z4%*%t(A)
+X4 = X4 - colMeans(X4)
+
+X5 = rnorm(n)
+#X5 = X5 - mean(X5)
+
+X6 = norm(X2i)
+X6 = X6 - mean(X6)
+
+X7 = norm(log(abs(X1)))
+X7 = X7 - mean(X7)
+
+X = list(X1=X1,X2=X2,X3=X3,X4=X4, X5=X5,  X6 = X6, X7 = X7)
+
+t1 = seq(0,1,length.out=p1)
+beta1 = 10*cos(2*pi*t1)
+
+t2 = seq(0,1,length.out=p2) 
+beta2 = log(1+4*t2^2)
+
+beta3 = rep(1,p2)
+
+beta4 = c(1,-1,0,3)
+
+beta7 = 1
+
+sigma = 0.01
+prod = list(f1 = ps, f2 = ps, f3 = ps, f4 = ps, f5=function(t,u){tcrossprod(t,u)}, f6=function(t,u){tcrossprod(t,u)}, f7=function(t,u){tcrossprod(t,u)})#,
+
+#prodbis = list(f1 = ps, f2 = ps, f3 = ps)
+
+Y1 = ps(beta1,X1) +rnorm(n,0,sigma)
+Y2 = as.vector(ps(beta1,X1) + tcrossprod(beta4,X4) + beta7*X7 + rnorm(n,0,sigma))
+#Y3 = 0.1*X$X5 + 0.2*X$X6 + 0.3*X$X7 + rnorm(n,0,sigma)
+
+# Algo
+niter = 100
+grille1 = r_grid(X,Y1,prod)
+res = glmnet_Func(X,Y1,prod,grille1)
+
+
+resBIC = glmnet_Func.BIC(X,Y1,prod,grille1,plots=F,sigma=sigma)#20*sqrt(n)*log(n)/p)
+resBIC
+resAIC = glmnet_Func.BIC(X,Y1,prod,grille1,plots=F,sigma=sigma,Cn=2/n)
+resAIC
+r=4*sqrt(2)*sigma*sqrt((log(p)-log(0.05))/n)
+resCV = glmnet_Func.CV(X,Y1,prod,grille1)
+resCV
+res_r = glmnet_Func.std(X,Y1,prod)
+
+# for example 1
+
+erreur_moy = rep(NA,length(grille1)) # pour stocker l'erreur dans la prediction de Y
+col = rep(NA,length(grille1))
+rec_support = rep(FALSE,length(grille1)) 
+erreur_estim = rep(NA,length(grille1)) # erreur d'estimation (en terme de norme H)
+boldbeta1 = list(beta1=beta1,beta2=rep(0,p2),beta3=rep(0,p2),beta4 = rep(0,4),beta5=0, beta6=0, beta7=0)
+norme_coeffs = matrix(NA,length(boldbeta1),length(grille1)) # norme de chaque coeff
+
+
+for (j in 1:length(grille1)){
+  erreur_moy[j] = mean((res[[j]]$preds-ps(beta1,X1))^2)
+  if (res[[j]]$cond_arret=="convergence"){
+    col[j] = 3
+  } else{
+    col[j] = 2
+  }
+  if (identical(res[[j]]$support,c(TRUE,rep(FALSE,6)))){
+    rec_support[j] = TRUE
+  } 
+  erreur_estim[j] = diff(boldbeta1,res[[j]]$beta,prod)
+  for (k in 1:length(boldbeta1)){
+    norme_coeffs[k,j] = sqrt(prod[[k]](res[[j]]$beta[[k]],res[[j]]$beta[[k]]))
+  }
+}
+
+rmax = grille1[min(which(rec_support))]
+rmin = grille1[max(which(rec_support))]
+
+
+
+plot(log(grille1[col==3]),rep(0,length(grille1[col==3])),type='n',ylim=range(0,sqrt(50)),xlab = 'log(r)',ylab='norm of beta_j')
+cols = c(3,rep(2,6))
+pchs = c(16,rep(1,6))
+for (k in 1:length(boldbeta1)){
+  points(log(grille1[col==3]),norme_coeffs[k,col==3],type='b',col=cols[k],pch=16)
+}
+abline(v=log(rmin),col='darkgreen',lwd=3)
+abline(v=log(rmax),col='darkgreen',lwd=3)
+abline(v=log(res_r$r),col=2,lwd=2,lty=2)
+abline(v=log(resBIC$r),col=3,lwd=2,lty=3)
+abline(v=log(resAIC$r),col=4,lwd=2,lty=5)
+abline(v=log(resCV$r),col=5,lwd=2,lty=4)
+abline(h=sqrt(50),lty=2)
+
+#legend('left',c('rmin*/rmax*', 'CV','naive BIC','naive AIC',expression(hat(r)[hat(sigma)]),"||beta^*||"),col=c('darkgreen',5,3,4,2,1),lwd=c(3,2,2,2,2,1),lty=c(1,4,3,5,2,2))
+
+
+
+
+
+# for example 2
+
+grille2 = r_grid(X,Y2,prod) #,epsilon=10^(-1),taille_grille=100
+#grille2 = seq(21,23,length.out = 100)[seq(100,1,by=-1)]
+res = glmnet_Func(X,Y2,prod,grille2)
+
+erreur_moy = rep(NA,length(grille2)) # pour stocker l'erreur dans la prediction de Y
+col = rep(NA,length(grille2))
+rec_support = rep(FALSE,length(grille2)) 
+erreur_estim = rep(NA,length(grille2)) # erreur d'estimation (en terme de norme H)
+boldbeta2 = list(beta1=beta1,beta2=0,beta3=rep(0,p2),beta4 = beta4, beta5=0, beta6=0, beta7=1)
+norme_coeffs = matrix(NA,length(boldbeta2),length(grille2)) # norme de chaque coeff
+
+
+for (j in 1:length(grille2)){
+  erreur_moy[j] = mean((res[[j]]$preds-ps(beta1,X1) - ps(beta2,X2) - tcrossprod(beta4,X4))^2)
+  if (res[[j]]$cond_arret=="convergence"){
+    col[j] = 3
+  } else{
+    col[j] = 2
+  }
+  if (identical(res[[j]]$support,c(T,F,F,T,F,F,T))){
+    rec_support[j] = TRUE
+  } 
+  erreur_estim[j] = diff(boldbeta2,res[[j]]$beta,prod)
+  for (k in 1:length(boldbeta2)){
+    norme_coeffs[k,j] = sqrt(prod[[k]](res[[j]]$beta[[k]],res[[j]]$beta[[k]]))
+  }
+}
+
+resBIC = glmnet_Func.BIC(X,Y2,prod,grille2,plots=F,sigma=sigma)#20*sqrt(n)*log(n)/p)
+resBIC
+resAIC = glmnet_Func.BIC(X,Y2,prod,grille2,plots=F,sigma=sigma,Cn=2/n)
+resAIC
+resCV = glmnet_Func.CV(X,Y2,prod,grille2)
+resCV
+res_r = glmnet_Func.std(X,Y2,prod)
+
+rmax = grille2[min(which(rec_support))]
+rmin = grille2[max(which(rec_support))]
+
+
+
+plot(log(grille2[col==3]),rep(0,length(grille2[col==3])),type='n',ylim=range(0,10),xlab = 'log(r)',ylab='norm of beta_j')
+cols = c(3,2,2,3,2,2,3)
+pchs = c(16,6,6,16,6,6,16)
+for (k in 1:length(boldbeta1)){
+  points(log(grille2[col==3]),norme_coeffs[k,col==3],type='b',col=cols[k],pch=16)
+}
+abline(v=log(rmin),col='darkgreen',lwd=3)
+abline(v=log(rmax),col='darkgreen',lwd=3)
+abline(v=log(res_r$r),col=2,lwd=2,lty=2)
+abline(v=log(resBIC$r),col=3,lwd=2,lty=3)
+abline(v=log(resAIC$r),col=4,lwd=2,lty=5)
+abline(v=log(resCV$r),col=5,lwd=2,lty=4)
+
+
+
+tmpLassotikho <- proc.time()[3]
+res = glmnet_Func.CV(X,Y1,prod,grille1)
+res
+par(mfrow=c(1,2))
+plot(t1,beta1,type='l',xlab='t',ylab=expression(beta[1](t)))
+plot(t1,res$beta[[1]],type='l',col=2, xlab='t',ylab=expression(hat(beta[1])(t)))
+par(mfrow=c(1,1))
+
+restikho = tikho.CV(list(X1=X1),Y1,list(ps1=prod[[1]]),10^(-3:1),list(beta1=res$beta[[1]]))#tikho.CV(list(X1=X1,X4=X4,X7=X7),Y2,list(ps1=prod[[1]],ps2=prod[[4]],ps3=prod[[7]]),10^(-3:1),list(beta1=res$beta[[1]],beta2=res$beta[[4]],beta7=res$beta[[7]]))#
+timeLassotikho <- proc.time()[3]-tmpLassotikho
+
+tmptikhocomplet<- proc.time()[3]
+restikhocomplet = tikho.CV(X,Y2,prod,10^(-4:1),init(X,n),calpha=2*10^(-6),expalpha=1,niter=200)
+#restikhocomplet2 = tikho(X,Y1,prod,restikhocomplet$rho,restikhocomplet$res$beta,calpha=2*10^(-6),niter=10000,plots=TRUE)
+timetikhocomplet<- proc.time()[3]-tmptikhocomplet
+
+plot(t1,beta1,type='l',xlab='t',ylab=expression(beta[1]))
+points(t1,restikho$res$beta$beta1,type='l',col=2,lty=2,lwd=1.5)
+points(t1,restikhocomplet$res$beta[[1]],type='l',col=4,lty=3,lwd=1.5)
+#points(t1,restikhocomplet2$beta[[1]],type='l',col=4,lty=3,lwd=1.5)
+
+#restikhocomplet3 = tikho.CV(Xbis,Y1,prodbis,10^(-4:1),restikhocomplet2$beta,calpha=2*10^(-3),expalpha=1)
+#restikhocomplet2 = tikho(Xbis,Y1,prodbis,100,restikhocomplet3$beta,calpha=2*10^(-3),niter=20000,expalpha=1,plots=TRUE)
