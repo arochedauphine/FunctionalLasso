@@ -1,0 +1,285 @@
+init <- function(X,n){
+# initialisation of beta to 0
+  p = length(X)
+
+  beta = vector("list",p)
+  for (j in 1:p){
+    if(is.vector(X[[j]])){
+      beta[[j]] = 0
+    } else {
+      beta[[j]] = rep(0,ncol(X[[j]]))
+    }
+  }
+  beta
+}
+
+ps_tot <- function(beta,X,prods){
+  # Input :
+  ## beta : a list of functions/vectors (element of H)
+  ## X : the data 
+  ## prods : a list of scalar products (functions of two variables) 
+  # Output : a vector of scalar products (<beta,X_i>) where <beta,X_i>=sum(prods[[j]](beta[[j]],X[[j]][i,]))
+  p = length(beta)
+  res = 0
+  for (j in 1:p){
+    res = res + prods[[j]](beta[[j]],X[[j]])
+  }
+  res
+}
+
+diff <- function(f,g,prods){
+  # Input
+  ## f,g : a list of functions/vectors (element of H)
+  ## prods : a list of scalar products (functions of two variables) 
+  # Output : norm of f-g
+  p = length(f)
+  res = 0
+  for (j in 1:p){
+    res = res+prods[[j]](f[[j]]-g[[j]],f[[j]]-g[[j]])
+  }
+  res
+}
+
+r_grid <- function(X,Y,prod,r_max=NULL,epsilon=0.001,r_min=NULL,taille_grille = 100){
+  ## Construct a grid of size taille_grille, from r_min to r_max in log scale.
+  ## If r_max = NULL, r_max is automatically chosen. 
+  p = length(X)
+  if (is.null(r_max)){
+    r_max = 0
+    for (j in 1:p){
+      if (is.null(dim(X[[j]]))){
+        temp = as.vector(mean(Y*X[[j]]))
+      } else {
+        temp = as.vector(colMeans(Y*X[[j]]))
+      }
+      num = sqrt(prod[[j]](t(temp),t(temp)))
+      denom = sqrt(mean(diag(prod[[j]](X[[j]],X[[j]]))))
+      r_max = max(r_max,num/denom)
+    }
+  }
+  if (is.null(r_min)){
+    r_min = epsilon*r_max
+  }
+  loggrid = seq(log(r_min),log(r_max),length = taille_grille)
+  sort(exp(loggrid),decreasing=TRUE)
+}
+
+glmnet_func <- function(X,Y,prods,r,niter=100,beta_init=init(X,n),weight=NULL,eps=10^(-5),expl = 10^10){
+  # Input : 
+  ## X the covariate, a list of matrices
+  ## Y a vector containing the variable of interest
+  ## prods a lis of scalar products
+  ## r : coeff such that lambda_j = coeff*sqrt(moyenne(normes de X_j^2))
+  ## niter : number of iterations
+  ## beta_init : initialisation of beta
+  ## weight : vector of size p containing the weights of the criterion (initialized to 1 if NULL)
+  
+  # Output :
+  ## beta : a list (element of H) giving the estimation of the slope for each group
+  ## preds : a vector of size n containing the predictions
+  ## lambda : a vector of size p containing the values of lambda_j
+  
+  n = length(Y)
+  p = length(X)
+  
+  if (is.null(beta_init)){
+    beta = init(X,n)
+  } else {
+    beta = beta_init
+  }
+  
+  if (is.null(weight)){
+    weight = rep(1,p)
+  }
+  
+  lambda = rep(NA,p)
+  N = rep(NA,p)
+  for (j in 1:p){
+    N[j] = mean(diag(prods[[j]](X[[j]],X[[j]])))
+    lambda[j] = r*sqrt(N[j])*weight[j]
+  }
+  Ychapeau = ps_tot(beta,X,prods)
+  prodscal = matrix(NA,n,p) # scalar products of beta with X_i
+  support = rep(FALSE,p) # support
+  for (i in 1:(niter-1)){
+    for (j in 1:p){
+      Deltaj = as.vector(crossprod(as.vector(Y-Ychapeau),X[[j]])/n)
+      increment = Deltaj+N[j]*beta[[j]]
+      normincrement = sqrt(prods[[j]](increment,increment))
+      if(mean(abs(Ychapeau))>expl){
+        return(list(beta=beta,preds=Ychapeau,lambda=lambda,support=support,cond_arret="explosion"))
+      }
+      if (lambda[j]<normincrement){
+        beta[[j]] = as.vector(((1/N[j]))*increment*(1-lambda[j]/normincrement))
+        support[j] = TRUE
+      } else {
+        beta[[j]] = rep(0,length(beta[[j]]))
+        support[j] = FALSE
+      }
+      prodscal[,j] = prods[[j]](beta[[j]],X[[j]])
+    }
+    Ychapeauold=Ychapeau
+    Ychapeau = ps_tot(beta,X,prods)
+    if(mean((Ychapeau-Ychapeauold)^2)<eps){
+      return(list(beta=beta,preds=Ychapeau,lambda=lambda,support=support,cond_arret="convergence",r=r,stderror=sd(Ychapeau-Y)))
+    }
+  }
+  list(beta=beta,preds=Ychapeau,lambda=lambda,support=support,cond_arret="max iter atteints",r=r,stderror=sd(Ychapeau-Y))
+}
+
+
+
+glmnet_Func <- function(X,Y,prods,r_grid,niter=100,beta_init=NULL,weight=NULL,eps=10^(-5),expl = 10^10){
+  # Input : 
+  ## X the covariate, a list of matrices
+  ## Y a vector containing the variable of interest
+  ## prods a list of scalar products
+  ## r_grid : a vector containing a grid of possible values of r 
+  ## niter : number of iterations
+  ## beta_init : initialisation of beta
+  ## weight : vector of size p containing the weights of the criterion (initialized to 1 if NULL)
+  
+  # Output : a list of size length(r_grid) containing the outputs of glmnet_func for each value of r (pathwise coordinates descent). 
+  
+  nbr = length(r_grid)
+  n = length(Y)
+  
+  res = vector("list",nbr)
+  
+  if(is.null(beta_init)){
+    beta_init = init(X,n)
+  }
+  
+  beta_actu = beta_init
+  for (l in 1:nbr){
+    r = r_grid[l]
+    #print(paste("r=",r))
+    res[[l]] = glmnet_func(X,Y,prods,r,niter,beta_init=beta_actu,weight,eps,expl)
+  }
+  res
+}
+
+glmnet_Func.CV <- function(X,Y,prods,r_grid,niter=100,beta_init=init(X,n),weight=NULL,eps=10^(-5),expl = 10^10,V=5,plots=FALSE){
+  
+  # Input : 
+  ## X the covariate, a list of matrices
+  ## Y a vector containing the variable of interest
+  ## prods a list of scalar products
+  ## r_grid : a vector containing a grid of possible values of r 
+  ## niter : number of iterations
+  ## beta_init : initialisation of beta
+  ## weight : vector of size p containing the weights of the criterion (initialized to 1 if NULL)
+  ## V : the number of folds for V-fold cross-validation
+  
+  # Output : output of glmnet_func for r selected by V-fold cross-validation. 
+  
+ 
+  
+  n <- length(Y)
+  size <- n/V
+  p <- length(X)
+  nbr <- length(r_grid)
+  errormean <- rep(NA,nbr)
+  predict <- matrix(NA,n,nbr)
+  
+  for (f in 1:V){
+    validationIndex <- seq((f - 1) * size + 1, f * size) 
+    Xvalid = vector("list",p)
+    Xpred = vector("list",p)
+    
+    for (k in 1:p){
+      if (is.vector(X[[k]])) {
+        Xvalid[[k]] = X[[k]][validationIndex]
+        Xpred[[k]] = X[[k]][-validationIndex]
+      } else {
+        Xvalid[[k]] = X[[k]][validationIndex,]
+        Xpred[[k]] = X[[k]][-validationIndex,]
+      }
+    }
+    
+    res = glmnet_Func(Xpred,Y[-validationIndex],prods,r_grid,niter,beta_init,weight,eps,expl)
+    
+    for (j in 1:nbr){
+      for (i in validationIndex){
+        Xpredi = vector("list",p)
+        for (k in 1:p){
+          if (is.vector(X[[k]])) {
+            Xpredi[[k]] = X[[k]][i]
+          } else {
+            Xpredi[[k]] = X[[k]][i,]
+          }
+        }
+        predict[i,j] = ps_tot(res[[j]]$beta,Xpredi,prods)
+      }
+    }
+  }
+  errormean <- apply((predict-tcrossprod(Y,rep(1,nbr)))^2,2,mean,na.rm=TRUE)
+
+  hatr <- r_grid[which.min(errormean)] # select the value of r minimizing the squared mean
+  glmnet_func(X,Y,prods,hatr,niter,beta_init,weight,eps,expl)
+}
+
+glmnet_Func.BIC <- function(X,Y,prods,r_grid,niter=100,beta_init=init(X,n),weight=NULL,eps=10^(-5),expl = 10^10,plots=FALSE,Cn=1){
+  
+  # Input : 
+  ## X the covariate, a list of matrices
+  ## Y a vector containing the variable of interest
+  ## prods a list of scalar products
+  ## r_grid : a vector containing a grid of possible values of r 
+  ## niter : number of iterations
+  ## beta_init : initialisation of beta
+  ## weight : vector of size p containing the weights of the criterion (initialized to 1 if NULL)
+  ## Cn : the coefficient of BIC criterion (cf Chand)
+  
+  # Output : output of glmnet_func for r selected by the BIC criterion. 
+  
+  
+  res = glmnet_Func(X,Y,prods,r_grid,niter,beta_init,weight,eps,expl)
+  size_grid = length(r_grid)
+  n = length(Y)
+  BICbiais = rep(NA,size_grid)
+  BICvar = rep(NA,size_grid)
+  
+  for (j in 1:size_grid){
+    if (res[[j]]$cond_arret=="convergence"){
+      BICbiais[j] = log(res[[j]]$stderror^2) 
+    }
+    BICvar[j] = sum(res[[j]]$support)*(log(n)/n)
+  }
+  BIC = BICbiais[!is.na(BICbiais)]+Cn*BICvar[!is.na(BICbiais)]
+  if (plots){
+    plot(r_grid[!is.na(BICbiais)],BIC,main='BIC criterion',type='b',ylim=range(c(BIC,BICbiais,BICvar),na.rm=T))
+    points(r_grid[!is.na(BICbiais)],BICbiais[!is.na(BICbiais)],type='b',col=2)
+    points(r_grid[!is.na(BICbiais)],BICvar[!is.na(BICbiais)],type='b',col=3)
+    abline(v=r_grid[which.min(BIC)])
+  }
+  jopt = which.min(BIC)
+  res[[jopt]]
+}
+
+glmnet_Func.std <- function(X,Y,prods,niter=100,beta_init=init(X,n),weight=NULL,eps=10^(-5),expl = 10^10,epsilon=0.001){
+  
+  # Input : 
+  ## X the covariate, a list of matrices
+  ## Y a vector containing the variable of interest
+  ## prods a list of scalar products
+  ## r_grid : a vector containing a grid of possible values of r 
+  ## niter : number of iterations
+  ## beta_init : initialisation of beta
+  ## weight : vector of size p containing the weights of the criterion (initialized to 1 if NULL)
+  
+  # Output : output of glmnet_func for r selected by the criterion based on the estimation of sigma.
+  
+  grille = r_grid(X,Y,prods,epsilon=epsilon)
+  lengrille = length(grille)
+  crit = FALSE
+  while(!crit){
+    resmax = glmnet_func(X,Y,prods,grille[lengrille],niter,beta_init,weight,eps,expl)
+    lengrille = lengrille-1
+    crit = resmax$cond_arret=="convergence"
+    }
+  std = resmax$stderror
+  p = length(X)
+  n = length(Y)
+  glmnet_func(X,Y,prods,4*sqrt(2)*std*sqrt((log(p)-log(0.05))/n),niter,beta_init,weight,eps,expl)
+}
