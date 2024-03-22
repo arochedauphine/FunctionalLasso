@@ -6,7 +6,7 @@ The code is published in the spririt of the article https://www.nature.com/artic
 Please find here a description of the files: 
 * Main files: 
   - main_elec.R: code for the treatment of electric consumption data (the data file name is energydata_complete.csv and comes from the website https://archive.ics.uci.edu/dataset/374/appliances+energy+prediction
-  - main2.R: code for the simulation study conducted in the article.
+  - main.R: code for the simulation study conducted in the article.
  
 * Files containing the R functions:
   - glmnet_func2.R: algorithm to approach the solution of the Lasso criterion inspired from the glmnet algorithm (Friedman, Hastie and Tibshirani, 2010) and Yang and Zou (2015). 
