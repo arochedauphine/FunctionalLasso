@@ -1,0 +1,160 @@
+source("normes_ps_L2.R")
+source("glmnet_func2.R")
+source("tikhonov.R")
+
+# Data preparation
+energy_data <- read.csv("energydata_complete.csv")
+#View(energy_data)
+
+energy_data$date <- strptime(as.character(energy_data$date),format="%Y-%m-%d %H:%M:%S")
+energy_data$date <- as.POSIXct(energy_data$date,tz = "UTC")
+
+#energy_data[,2] = log(energy_data[,2])
+
+dim(energy_data)
+names(energy_data)
+
+p = 24
+n = 137
+X = vector("list",p)
+Xc = vector("list",p)
+t = seq(from=0,by=24/144,length=144)
+
+plot(ts(energy_data[,2],start=c(2016,1470),frequency = 52560))
+
+## centering the data
+for (k in 1:p){
+  X[[k]] = matrix(energy_data[1:19728,k+1],137,144,byrow=TRUE)
+  r = range(X[[k]])
+  len = mean(sqrt(diag(ps(X[[k]],X[[k]]))))
+  Xc[[k]] = (X[[k]]-colMeans(X[[k]]))/len
+}
+
+
+par(mfrow=c(2,3))
+for (k in 1:p){
+  plot(c(0,24),range(X[[k]]),type='n',xlab='t(hours)',ylab=names(energy_data)[k+1] )
+  for (i in 1:137){
+    points(t,X[[k]][i,],type='l')
+    points(t,colMeans(X[[k]]),type='l',col=2)
+  }
+}
+
+par(mfrow=c(3,2))
+for (k in 1:p){
+  plot(c(0,24),range(Xc[[k]]),type='n',xlab='t(hours)',ylab=names(energy_data)[k+1] )
+  for (i in 1:n){
+    points(t,Xc[[k]][i,],type='l')
+  }
+}
+
+Ync = rep(NA,n)
+for (i in 1:n){
+  Ync[i] = mean(X[[1]][i,])
+}
+Y = Ync-mean(Ync)
+
+prods = vector("list",p)
+for (k in 1:p){
+  prods[[k]] = ps
+}
+
+
+
+
+# Plot of norm of coefficient estimates as a function of r
+nrep = 30
+support = matrix(NA,nrep,p)
+grille = r_grid(Xc,Y,prods,epsilon=0.1)
+res = glmnet_Func(Xc,Y,prods,grille)
+col = rep(NA,length(grille))
+norme_coeffs = matrix(NA,p,length(grille)) # norm of each coeff
+
+for (j in 1:length(grille)){
+  if (res[[j]]$cond_arret=="convergence"){
+    col[j] = 3
+  } else{
+    col[j] = 2
+  }
+  for (k in 1:p){
+    norme_coeffs[k,j] = sqrt(prods[[k]](res[[j]]$beta[[k]],res[[j]]$beta[[k]]))
+  }
+}
+
+par(mfrow=c(1,1))
+plot(grille[col==3],rep(0,length(grille[col==3])),type='n',ylim=range(norme_coeffs[,col==3]),xlab = 'r',ylab='norm of beta_j')
+for (k in 1:p){
+  points(grille[col==3],norme_coeffs[k,col==3],pch=16,type='b')
+}
+
+# Result with selection of parameter r
+res <- glmnet_Func.std(Xc,Y,prods)
+
+supp = res$support
+pred = sum(supp)
+
+# empty support : r is too large ! 
+r_modif = 0.06
+res <- glmnet_func(Xc,Y,prods,r=r_modif)
+supp = res$support
+pred = sum(supp)
+Xred = vector("list",pred)
+prodred = vector("list",pred)
+betared = vector("list",pred)
+inred = which(supp)
+
+for (k in 1:pred){
+  Xred[[k]] = Xc[[inred[k]]]
+  prodred[[k]] = prods[[inred[k]]]
+  betared[[k]] = res$beta[[inred[k]]]
+}
+
+# Tikhonov regularization on reduced support
+
+restikho = tikho.CV(Xred,Y,prodred,10^(-3:1),betared,calpha=20)
+
+for (k in 1:pred){
+  plot(t,restikho$res$beta[[k]],type='l',xlab='t(hours)',ylab=names(energy_data)[inred[k]+1])
+}
+
+# Separation learning sample/test sample
+ntest = round(0.3*n)
+nrep = 30
+
+indtest = sample(n,ntest)
+
+Ytest = Y[indtest]
+Ylearn = Y[-indtest]
+Xlearn = vector("list",p)
+Xtest = vector("list",p)
+for (k in 1:p){
+  Xlearn[[k]] = Xc[[k]][-indtest,]
+  Xtest[[k]] = Xc[[k]][indtest,]
+}
+
+
+reslearn = glmnet_func(Xlearn,Ylearn,prods,r=r_modif)
+
+supplearn = reslearn$support
+predlearn = sum(supplearn)
+Xredlearn = vector("list",predlearn)
+Xredtest = vector("list",predlearn)
+prodred = vector("list",predlearn)
+betaredlearn = vector("list",predlearn)
+inredlearn = which(supplearn)
+
+for (k in 1:predlearn){
+  Xredlearn[[k]] = Xlearn[[inredlearn[k]]]
+  Xredtest[[k]] = Xtest[[inredlearn[k]]]
+  prodred[[k]] = prods[[inredlearn[k]]]
+  betaredlearn[[k]] = reslearn$beta[[inredlearn[k]]]
+}
+
+restikho = tikho.CV(Xredlearn,Ylearn,prodred,10^(-3:1),init(Xredlearn,n),calpha=20)
+preds = ps_tot(restikho$res$beta,Xredtest,prodred)
+
+vraiappl = Ytest
+predappl = preds
+plot(vraiappl,predappl,pch=16,xlab='Observed values',ylab='Predicted values',xlim=range(c(vraiappl,predappl)),ylim=range(c(vraiappl,predappl)),col='blue')
+abline(0,1)
+
