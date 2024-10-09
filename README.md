@@ -1,7 +1,7 @@
 # FunctionalLasso
 R codes for the article Roche, A. (2023) Lasso in infinite dimension: application to variable selection in functional multivariate linear regression, Electronic Journal of Statistics, 17(2), 3357-3405.
 
-The code is published in the spririt of the article https://www.nature.com/articles/467753a. It does not include necessarily good comments and may not be robust to the treatment of another dataset. Please do not hesitate to send any comment or question to roche@ceremade.dauphine.fr. 
+The code is published in the spririt of the article https://www.nature.com/articles/467753a. It does not include necessarily good comments and may not be robust to the treatment of another dataset. Please do not hesitate to send any comment or question to angelina.roche@u-paris.fr. 
 
 Please find here a description of the files: 
 * Main files: 
