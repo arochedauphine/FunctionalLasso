@@ -11,8 +11,7 @@ Please find here a description of the files:
 * Files containing the R functions:
   - glmnet_func2.R: algorithm to approach the solution of the Lasso criterion inspired from the glmnet algorithm (Friedman, Hastie and Tibshirani, 2010) and Yang and Zou (2015).
     
-        J. Friedman, T. Hastie, and R. Tibshirani. Regularization paths for generalized linear models via coordinate descent. Journal of Statistical Software,
-33(1):1–22, 2010.
+        J. Friedman, T. Hastie, and R. Tibshirani. Regularization paths for generalized linear models via coordinate descent. Journal of Statistical Software, 33(1):1–22, 2010.
 
       Y. Yang and H. Zou. A fast unified algorithm for solving group-lasso penalize learning problems. Stat. Comput., 25(6):1129–1141, 2015.
 
